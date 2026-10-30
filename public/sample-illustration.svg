@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" role="img" aria-labelledby="title desc">
+  <title id="title">裝修工程報價示例插圖</title>
+  <desc id="desc">幾何線條描繪房屋、工程尺及報價清單。</desc>
+  <rect width="640" height="420" rx="32" fill="#f5f1e9"/>
+  <circle cx="520" cy="92" r="42" fill="#f4cb6b" opacity=".8"/>
+  <path d="M94 210 254 88l160 122v142H94z" fill="#fffdf8" stroke="#315b5b" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M214 352v-96a40 40 0 0 1 80 0v96" fill="#dbe8df" stroke="#315b5b" stroke-width="10"/>
+  <path d="M118 218h272M133 244h66M133 272h54M133 300h42" fill="none" stroke="#d39c3a" stroke-width="9" stroke-linecap="round"/>
+  <rect x="392" y="210" width="168" height="142" rx="18" fill="#315b5b"/>
+  <path d="M420 250h106M420 278h82M420 306h96" fill="none" stroke="#fffdf8" stroke-width="9" stroke-linecap="round"/>
+  <path d="m472 130 42-42 38 38-42 42z" fill="#d9e7e2" stroke="#315b5b" stroke-width="9" stroke-linejoin="round"/>
+  <path d="m475 126 38 38" stroke="#315b5b" stroke-width="7"/>
+</svg>

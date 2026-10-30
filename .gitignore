@@ -1,0 +1,12 @@
+node_modules/
+.output/
+.wrangler/
+.vercel/
+.dev.vars*
+.env*
+!.env.example
+.grok/
+coverage/
+dist/
+*.log
+attachments/
