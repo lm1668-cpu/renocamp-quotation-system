@@ -255,6 +255,50 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function waitCurrentUser() {
+  return new Promise((resolve) => {
+    const off = firebase.auth().onAuthStateChanged((user) => {
+      off();
+      resolve(user);
+    });
+  });
+}
+
+async function syncFromCloud(cfg) {
+  const user = firebase.auth().currentUser;
+  if (!user) return;
+  const uid = user.uid;
+  const email = user.email || "";
+  const db = firebase.firestore();
+  const site = db.collection("sites").doc("qs");
+  const snap = await site.get();
+  const data = snap.exists ? snap.data() : null;
+  if (data && data.catalog) state.catalog = data.catalog;
+  if (data && data.quoteLook) state.quoteLook = parseLook(data.quoteLook);
+  if (data) {
+    state.account.fpsId = data.fpsId || "";
+    state.account.payNote = data.payNote || state.account.payNote;
+    state.account.isAdmin = data.adminUid === uid;
+    if (typeof data.seq === "number" && data.adminUid === uid) state.seq = data.seq;
+  } else {
+    state.account.isAdmin = false;
+  }
+  const quotesQuery = data && data.adminUid === uid ? site.collection("quotes") : site.collection("quotes").where("owner", "==", uid);
+  const quotesSnap = snap.exists ? await quotesQuery.get() : { docs: [] };
+  if (snap.exists) {
+    state.quotes = quotesSnap.docs.map((doc) => doc.data());
+  }
+  cloud = { db, uid, email, site, adminUid: data?.adminUid || "", quoteIds: new Set(state.quotes.map((q) => q.id)) };
+  if (!snap.exists) {
+    state.account.isAdmin = true;
+    cloud.adminUid = uid;
+    await pushCloud();
+  }
+  updateCloudBanner("已連線 Firebase（專案：" + cfg.projectId + (email ? " · " + email : "") + "）。報價單同目錄會自動同步。");
+  persist();
+  draw();
+}
+
 async function bootCloud() {
   const cfg = readFirebaseConfig();
   if (!cfg.apiKey || !cfg.projectId) {
@@ -269,34 +313,11 @@ async function bootCloud() {
       await loadScript(base + "firebase-firestore-compat.js");
     }
     if (!firebase.apps.length) firebase.initializeApp(cfg);
-    await firebase.auth().signInAnonymously();
-    const uid = firebase.auth().currentUser.uid;
-    const db = firebase.firestore();
-    const site = db.collection("sites").doc("qs");
-    const snap = await site.get();
-    const data = snap.exists ? snap.data() : null;
-    if (data && data.catalog) state.catalog = data.catalog;
-    if (data && data.quoteLook) state.quoteLook = parseLook(data.quoteLook);
-    if (data) {
-      state.account.fpsId = data.fpsId || "";
-      state.account.payNote = data.payNote || state.account.payNote;
-      state.account.isAdmin = data.adminUid === uid;
-      if (typeof data.seq === "number" && data.adminUid === uid) state.seq = data.seq;
+    let user = await waitCurrentUser();
+    if (!user) {
+      await firebase.auth().signInAnonymously();
     }
-    const quotesQuery = data && data.adminUid === uid ? site.collection("quotes") : site.collection("quotes").where("owner", "==", uid);
-    const quotesSnap = snap.exists ? await quotesQuery.get() : { docs: [] };
-    if (snap.exists) {
-      state.quotes = quotesSnap.docs.map((doc) => doc.data());
-    }
-    cloud = { db, uid, site, adminUid: data?.adminUid || "", quoteIds: new Set(state.quotes.map((q) => q.id)) };
-    if (!snap.exists) {
-      state.account.isAdmin = true;
-      cloud.adminUid = uid;
-      await pushCloud();
-    }
-    updateCloudBanner("已連線 Firebase（專案：" + cfg.projectId + "）。報價單同目錄會自動同步。");
-    persist();
-    draw();
+    await syncFromCloud(cfg);
   } catch (err) {
     updateCloudBanner("Firebase 連線未成功（" + (err?.message || "請檢查設定同安全規則") + "），暫時留喺呢部瀏覽器。");
   }
@@ -905,20 +926,72 @@ function planPage() {
 
 function adminPage() {
   if (!state.account.isAdmin) {
-    const box = el(`<section class="card pad"><h1>後台</h1><p class="muted">未有管理員。呢部瀏覽器第一個撳下面嘅人就係管理員。</p><button type="button" class="primary" id="claim">我做管理員</button></section>`);
-    box.querySelector("#claim").addEventListener("click", () => {
-      if (cloud && cloud.adminUid && cloud.adminUid !== cloud.uid) {
-        alert("已經有管理員。");
-        return;
-      }
-      state.account.isAdmin = true;
-      if (cloud) cloud.adminUid = cloud.uid;
-      persist();
-      draw();
-    });
+    const hasCloudAdmin = Boolean(cloud && cloud.adminUid);
+    const box = el(`<section class="card pad" style="max-width:34rem">
+      <h1>後台管理登入</h1>
+      <p class="muted" style="margin:.35rem 0 0">${hasCloudAdmin ? "系統已經設定咗管理員。請用你喺 Firebase 建立嘅管理員電郵同密碼登入，之後任何電腦或手機都入到後台。" : "未有管理員。你可以直接用電郵登入，或者撳下面做呢部機嘅管理員。"}</p>
+      ${cloud ? `<form id="admin-login" style="margin-top:.9rem;display:grid;gap:.55rem">
+        <div><label class="f">管理員電郵</label><input id="adm-email" type="email" autocomplete="username" required placeholder="例如 info@pbc.ltd"></div>
+        <div><label class="f">密碼</label><input id="adm-pass" type="password" autocomplete="current-password" required placeholder="請輸入管理員密碼"></div>
+        <button type="submit" class="primary" id="adm-go" style="margin-top:.25rem">登入管理員後台</button>
+        <p id="adm-err" class="warn" style="margin:0"></p>
+      </form>` : ""}
+      ${!hasCloudAdmin ? `<div style="margin-top:1rem;padding-top:.85rem;border-top:1px solid var(--line)"><button type="button" class="pill" id="claim" style="box-shadow:0 0 0 1px var(--line)">我做管理員（本機首次開通）</button></div>` : ""}
+      ${cloud ? `<p class="muted" style="margin:.9rem 0 0;font-size:.78rem;word-break:break-all">目前登入：${esc(cloud.email || "匿名訪客")} · UID：<code>${esc(cloud.uid)}</code></p>` : ""}
+    </section>`);
+    const loginForm = box.querySelector("#admin-login");
+    if (loginForm) {
+      loginForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const email = box.querySelector("#adm-email").value.trim();
+        const pass = box.querySelector("#adm-pass").value;
+        const errEl = box.querySelector("#adm-err");
+        const btn = box.querySelector("#adm-go");
+        btn.disabled = true;
+        errEl.textContent = "";
+        try {
+          await firebase.auth().signInWithEmailAndPassword(email, pass);
+          await syncFromCloud(readFirebaseConfig());
+          if (!state.account.isAdmin) {
+            errEl.textContent = "電郵已登入，但呢個 UID 仲未設做管理員。請喺 Firebase Firestore 嘅 sites/qs 將 adminUid 改做下面顯示嘅 UID。";
+          }
+        } catch (err) {
+          errEl.textContent = "登入失敗：" + (err?.message || "請檢查電郵、密碼，同埋 Firebase 有冇開「電子郵件/密碼」登入。");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    }
+    const claimBtn = box.querySelector("#claim");
+    if (claimBtn) {
+      claimBtn.addEventListener("click", () => {
+        if (cloud && cloud.adminUid && cloud.adminUid !== cloud.uid) {
+          alert("已經有管理員。");
+          return;
+        }
+        state.account.isAdmin = true;
+        if (cloud) cloud.adminUid = cloud.uid;
+        persist();
+        draw();
+      });
+    }
     return box;
   }
-  const root = el(`<div style="padding-bottom:2rem"><h1>後台管理</h1><p class="muted">加減總項、大項、細項、出街單版面、收費確認，同一鍵推送去 GitHub。</p><div class="steps" id="tabs"></div><div id="panel"></div></div>`);
+  const root = el(`<div style="padding-bottom:2rem"><div class="rowbtns" style="justify-content:space-between"><div><h1>後台管理</h1><p class="muted" style="margin:.2rem 0 0">加減總項、大項、細項、出街單版面、收費確認，同一鍵推送去 GitHub。${cloud && cloud.email ? "（已登入：" + esc(cloud.email) + "）" : ""}</p></div>${cloud ? `<button type="button" class="ghost" id="adm-logout">登出管理員</button>` : ""}</div><div class="steps" id="tabs"></div><div id="panel"></div></div>`);
+  const outBtn = root.querySelector("#adm-logout");
+  if (outBtn) {
+    outBtn.addEventListener("click", async () => {
+      try {
+        await firebase.auth().signOut();
+        await firebase.auth().signInAnonymously();
+        await syncFromCloud(readFirebaseConfig());
+      } catch {
+        state.account.isAdmin = false;
+        persist();
+        draw();
+      }
+    });
+  }
   for (const [id, label] of [["groups", "總項"], ["majors", "大項"], ["items", "細項"], ["look", "版面"], ["bills", "收費"], ["deploy", "發佈 / 雲端"]]) {
     const b = el(`<button type="button" class="pill ${state.adminTab === id ? "on" : ""}" style="box-shadow:0 0 0 1px var(--line)">${label}</button>`);
     b.addEventListener("click", () => { state.adminTab = id; persist(); draw(); });
